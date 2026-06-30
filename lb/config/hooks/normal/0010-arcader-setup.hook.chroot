@@ -23,6 +23,8 @@ xset s noblank
 
 unclutter -idle 0.1 -root &
 
+picom -b 2>/dev/null || true
+
 sleep 2
 systemctl --user start arcaderd.service 2>/dev/null || /usr/bin/arcaderd &
 sleep 1

@@ -19,6 +19,7 @@ xorg
 xinit
 openbox
 obconf
+picom
 x11-xserver-utils
 unclutter
 mesa-utils
