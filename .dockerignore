@@ -1,0 +1,5 @@
+out/
+*.qcow2
+*.iso
+.git/
+.idea/

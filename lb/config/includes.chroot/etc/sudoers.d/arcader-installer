@@ -1,0 +1,1 @@
+arcader ALL=(root) NOPASSWD: /usr/local/sbin/arcader-install

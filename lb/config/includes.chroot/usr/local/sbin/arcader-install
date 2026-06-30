@@ -1,0 +1,182 @@
+#!/bin/bash
+set -euo pipefail
+
+if [ "${EUID:-$(id -u)}" -ne 0 ]; then
+  exec sudo -n "$0" "$@"
+fi
+
+trap 'echo; echo "Installer failed at line $LINENO. Dropping to shell for diagnosis."; bash -i' ERR
+
+clear
+cat <<'BANNER'
+==============================================================
+              Arcader Kiosk — Installer
+==============================================================
+
+ This will WIPE the chosen disk and install the kiosk system
+ on it. After install the machine boots straight into kiosk
+ mode from the internal disk; the USB is no longer required.
+
+BANNER
+
+LIVE_PART="$(findmnt -no SOURCE /run/live/medium 2>/dev/null || true)"
+LIVE_DEV=""
+if [ -n "$LIVE_PART" ]; then
+  LIVE_DEV="$(lsblk -no pkname "$LIVE_PART" 2>/dev/null || true)"
+fi
+
+echo "Detected disks:"
+echo
+lsblk -dno NAME,SIZE,MODEL,TRAN -e7,11 | \
+  awk -v live="$LIVE_DEV" '{ tag = ($1 == live ? "  [live USB — excluded]" : ""); printf "  %-12s %-10s %-30s %-6s%s\n", $1, $2, $3" "$4, $NF, tag }'
+echo
+
+read -rp "Target disk name (e.g. sda, nvme0n1) or 'quit': " TARGET
+[ "$TARGET" = "quit" ] && exit 1
+[ -b "/dev/$TARGET" ] || { echo "ERROR: /dev/$TARGET is not a block device"; exit 1; }
+[ "$TARGET" = "$LIVE_DEV" ] && { echo "ERROR: refusing to install onto the live USB"; exit 1; }
+
+DEV="/dev/$TARGET"
+case "$DEV" in
+  *nvme*|*mmcblk*) PFX="${DEV}p" ;;
+  *)               PFX="$DEV" ;;
+esac
+
+if [ -d /sys/firmware/efi ]; then MODE=uefi; else MODE=bios; fi
+
+DEB_ARCH="$(dpkg --print-architecture)"
+case "$DEB_ARCH" in
+  amd64) EFI_TARGET=x86_64-efi; EFI_GRUB=grubx64.efi;  EFI_BOOT=BOOTX64.EFI  ;;
+  i386)  EFI_TARGET=i386-efi;   EFI_GRUB=grubia32.efi; EFI_BOOT=BOOTIA32.EFI ;;
+  *)     echo "ERROR: unsupported architecture '$DEB_ARCH'"; exit 1 ;;
+esac
+
+echo
+echo "Architecture  : $DEB_ARCH"
+echo "Firmware mode : $MODE"
+echo "Target disk   : $DEV"
+echo
+read -rp "Type 'YES' (uppercase) to ERASE $DEV and install: " ANS
+[ "$ANS" = "YES" ] || { echo "Aborted."; exit 1; }
+
+echo
+echo "[1/6] Partitioning $DEV ..."
+swapoff -a || true
+umount -R "${PFX}"* 2>/dev/null || true
+wipefs -af "$DEV"
+sgdisk --zap-all "$DEV" >/dev/null
+
+parted -s "$DEV" mklabel gpt
+parted -s "$DEV" mkpart bios_boot 1MiB 2MiB
+parted -s "$DEV" set 1 bios_grub on
+parted -s "$DEV" mkpart ESP fat32 2MiB 514MiB
+parted -s "$DEV" set 2 esp on
+parted -s "$DEV" mkpart root ext4 514MiB 100%
+
+partprobe "$DEV" || true
+udevadm settle || sleep 2
+
+echo "[2/6] Formatting filesystems ..."
+mkfs.fat -F32 -n EFI    "${PFX}2"
+mkfs.ext4 -F -L arcader  "${PFX}3"
+
+MNT=/mnt/install
+mkdir -p "$MNT"
+mount "${PFX}3" "$MNT"
+mkdir -p "$MNT/boot/efi"
+mount "${PFX}2" "$MNT/boot/efi"
+
+echo "Stopping arcaderd on the live system before copy ..."
+ARCADER_UID="$(id -u arcader 2>/dev/null || echo '')"
+if [ -n "$ARCADER_UID" ]; then
+  sudo -u arcader XDG_RUNTIME_DIR="/run/user/$ARCADER_UID" \
+    systemctl --user stop arcaderd.service 2>/dev/null || true
+fi
+pkill -u arcader -x arcaderd 2>/dev/null || true
+pkill -u arcader -x arcaderui 2>/dev/null || true
+sleep 1
+
+echo "[3/6] Copying system to disk (this can take a few minutes) ..."
+rsync -aAXH --info=progress2 \
+  --exclude='/proc/*' \
+  --exclude='/sys/*' \
+  --exclude='/dev/*' \
+  --exclude='/run/*' \
+  --exclude='/tmp/*' \
+  --exclude='/mnt/*' \
+  --exclude='/media/*' \
+  --exclude='/lib/live' \
+  --exclude='/var/cache/apt/archives/*' \
+  --exclude='/var/lib/arcader/data/temp_*' \
+  --exclude='/var/lib/arcader/data/*_extract' \
+  --exclude='/etc/fstab' \
+  --exclude='/boot/efi/*' \
+  / "$MNT/"
+
+mkdir -p "$MNT"/{proc,sys,dev,run,tmp,mnt,media}
+
+ROOT_UUID="$(blkid -s UUID -o value "${PFX}3")"
+EFI_UUID="$(blkid -s UUID -o value  "${PFX}2")"
+cat > "$MNT/etc/fstab" <<EOF
+UUID=$ROOT_UUID  /          ext4  defaults,noatime           0  1
+UUID=$EFI_UUID   /boot/efi  vfat  defaults,umask=0077        0  1
+tmpfs            /tmp       tmpfs defaults,nosuid,nodev      0  0
+EOF
+
+echo "[4/6] Preparing chroot ..."
+mount --bind /dev     "$MNT/dev"
+mount --bind /dev/pts "$MNT/dev/pts"
+mount -t proc  proc   "$MNT/proc"
+mount -t sysfs sys    "$MNT/sys"
+mount -t tmpfs tmpfs  "$MNT/run"
+if [ "$MODE" = "uefi" ]; then
+  mount --bind /sys/firmware/efi/efivars "$MNT/sys/firmware/efi/efivars" 2>/dev/null || true
+fi
+
+echo "[5/6] Installing bootloader ($MODE) and regenerating initramfs ..."
+chroot "$MNT" /usr/bin/env DEBIAN_FRONTEND=noninteractive bash -e <<EOC
+apt-get -y purge live-boot live-boot-doc live-config live-config-systemd live-tools 2>/dev/null || true
+apt-get -y autoremove --purge 2>/dev/null || true
+
+update-initramfs -u -k all
+
+cat > /etc/default/grub <<EOG
+GRUB_DEFAULT=0
+GRUB_TIMEOUT=1
+GRUB_DISTRIBUTOR="Arcader"
+GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"
+GRUB_CMDLINE_LINUX=""
+GRUB_DISABLE_RECOVERY=true
+GRUB_DISABLE_OS_PROBER=true
+EOG
+
+if [ "$MODE" = "uefi" ]; then
+  grub-install --target=$EFI_TARGET --efi-directory=/boot/efi --bootloader-id=arcader --recheck
+  mkdir -p /boot/efi/EFI/BOOT
+  cp /boot/efi/EFI/arcader/$EFI_GRUB /boot/efi/EFI/BOOT/$EFI_BOOT
+else
+  grub-install --target=i386-pc --recheck "$DEV"
+fi
+update-grub
+
+echo "installed=\$(date -Iseconds)" > /etc/arcader-installed
+
+mkdir -p /var/lib/systemd/linger
+: > /var/lib/systemd/linger/arcader
+
+rm -rf /var/lib/arcader/data/temp_cores_extract \
+       /var/lib/arcader/data/temp_* \
+       /var/lib/arcader/data/*_extract 2>/dev/null || true
+EOC
+
+echo "[6/6] Unmounting ..."
+sync
+umount -lR "$MNT" || true
+
+echo
+echo "=============================================================="
+echo "  Install complete."
+echo "  Remove the USB stick, then press Enter to reboot."
+echo "=============================================================="
+read -r _
+systemctl reboot

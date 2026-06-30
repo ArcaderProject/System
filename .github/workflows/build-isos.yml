@@ -1,0 +1,89 @@
+name: Build kiosk ISOs
+
+on:
+  workflow_dispatch:
+    inputs:
+      arcader_version:
+        description: "Arcader version (e.g. 1.2.2) or 'latest'"
+        default: latest
+        required: false
+      force:
+        description: "Rebuild even if a release for this version already exists"
+        type: boolean
+        default: false
+  schedule:
+    - cron: "0 6 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-isos
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve Arcader version
+        id: ver
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V="${{ github.event.inputs.arcader_version }}"
+          if [ -z "$V" ] || [ "$V" = "latest" ]; then
+            V="$(gh api repos/ArcaderProject/Arcader/releases/latest --jq .tag_name)"
+          fi
+          V="${V#v}"
+          [ -n "$V" ] || { echo "could not resolve Arcader version" >&2; exit 1; }
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "tag=v$V" >> "$GITHUB_OUTPUT"
+          echo "Arcader version: $V"
+
+      - name: Decide whether to build
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          elif gh release view "${{ steps.ver.outputs.tag }}" >/dev/null 2>&1; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+            echo "Release ${{ steps.ver.outputs.tag }} already exists; nothing to do."
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Free disk space
+        if: steps.check.outputs.build == 'true'
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          sudo docker image prune -af || true
+          df -h /
+
+      - name: Build ISOs
+        if: steps.check.outputs.build == 'true'
+        env:
+          ARCADER_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          sudo modprobe loop || true
+          ./run.sh amd64 i386
+          ls -la out/
+
+      - name: Publish release
+        if: steps.check.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" out/arcader-kiosk-amd64.iso out/arcader-kiosk-i386.iso --clobber
+          else
+            gh release create "$TAG" \
+              out/arcader-kiosk-amd64.iso out/arcader-kiosk-i386.iso \
+              --title "Arcader Kiosk $TAG" \
+              --notes "Kiosk Live ISOs (amd64 + i386) built from Arcader $TAG."
+          fi
