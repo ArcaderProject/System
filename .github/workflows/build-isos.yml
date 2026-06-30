@@ -84,6 +84,6 @@ jobs:
           else
             gh release create "$TAG" \
               out/arcader-kiosk-amd64.iso out/arcader-kiosk-i386.iso \
-              --title "Arcader Kiosk $TAG" \
+              --title "Arcader $TAG" \
               --notes "Kiosk Live ISOs (amd64 + i386) built from Arcader $TAG."
           fi

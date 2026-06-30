@@ -28,6 +28,8 @@ mesa-vulkan-drivers
 libvulkan1
 vulkan-tools
 firmware-misc-nonfree
+plymouth
+plymouth-label
 alsa-utils
 pulseaudio
 pulseaudio-utils

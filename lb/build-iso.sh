@@ -30,7 +30,7 @@ fi
 DEB_FILE="arcader_${ARCADER_VERSION}_${ARCH}.deb"
 DEB_URL="https://github.com/ArcaderProject/Arcader/releases/download/v${ARCADER_VERSION}/${DEB_FILE}"
 
-echo ">> Building Arcader kiosk ISO for ARCH=$ARCH using $DEB_FILE"
+echo ">> Building kiosk ISO for ARCH=$ARCH using $DEB_FILE"
 
 cat > config/package-lists/arch.list.chroot <<EOF
 $LINUX_IMAGE
@@ -52,7 +52,7 @@ lb config noauto \
   --apt-indices false \
   --apt-recommends false \
   --memtest none \
-  --bootappend-live "boot=live components quiet splash"
+  --bootappend-live "boot=live components quiet splash loglevel=3 vt.global_cursor_default=0 rd.systemd.show_status=false systemd.show_status=false udev.log_level=3 rd.udev.log_level=3"
 
 lb build
 

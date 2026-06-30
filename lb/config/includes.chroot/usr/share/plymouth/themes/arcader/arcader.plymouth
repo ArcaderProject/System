@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Arcader
+Description=Arcader boot splash
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/arcader
+ScriptFile=/usr/share/plymouth/themes/arcader/arcader.script

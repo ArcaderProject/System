@@ -1,0 +1,36 @@
+Window.SetBackgroundTopColor(0.0, 0.0, 0.0);
+Window.SetBackgroundBottomColor(0.0, 0.0, 0.0);
+
+screen_width = Window.GetWidth();
+screen_height = Window.GetHeight();
+
+logo.image = Image("banner.png");
+logo_width = logo.image.GetWidth();
+logo_height = logo.image.GetHeight();
+
+max_width = screen_width * 0.7;
+if (logo_width > max_width) {
+  scale = max_width / logo_width;
+  logo.image = logo.image.Scale(logo_width * scale, logo_height * scale);
+  logo_width = logo.image.GetWidth();
+  logo_height = logo.image.GetHeight();
+}
+
+logo.sprite = Sprite(logo.image);
+logo.sprite.SetX(screen_width / 2 - logo_width / 2);
+logo.sprite.SetY(screen_height / 2 - logo_height / 2);
+
+progress = 0;
+direction = 1;
+fun refresh_callback() {
+  progress = progress + direction;
+  if (progress >= 50) direction = -1;
+  if (progress <= 0) direction = 1;
+  logo.sprite.SetOpacity(0.6 + (progress / 50) * 0.4);
+}
+Plymouth.SetRefreshFunction(refresh_callback);
+
+fun quit_callback() {
+  logo.sprite.SetOpacity(1);
+}
+Plymouth.SetQuitFunction(quit_callback);

@@ -10,7 +10,7 @@ trap 'echo; echo "Installer failed at line $LINENO. Dropping to shell for diagno
 clear
 cat <<'BANNER'
 ==============================================================
-              Arcader Kiosk — Installer
+                      Arcader Installer
 ==============================================================
 
  This will WIPE the chosen disk and install the kiosk system
@@ -142,9 +142,10 @@ update-initramfs -u -k all
 
 cat > /etc/default/grub <<EOG
 GRUB_DEFAULT=0
-GRUB_TIMEOUT=1
+GRUB_TIMEOUT=0
+GRUB_TIMEOUT_STYLE=hidden
 GRUB_DISTRIBUTOR="Arcader"
-GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"
+GRUB_CMDLINE_LINUX_DEFAULT="quiet splash loglevel=3 vt.global_cursor_default=0 rd.systemd.show_status=false systemd.show_status=false udev.log_level=3 rd.udev.log_level=3"
 GRUB_CMDLINE_LINUX=""
 GRUB_DISABLE_RECOVERY=true
 GRUB_DISABLE_OS_PROBER=true

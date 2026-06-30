@@ -64,6 +64,8 @@ chmod +x $USER_HOME/.xinitrc
 
 chown -R $ARCADER_USER:$ARCADER_USER $USER_HOME/.config $USER_HOME/.xinitrc
 
+plymouth-set-default-theme -R arcader
+
 systemctl set-default multi-user.target
 
 chmod 755 /usr/local/sbin/arcader-install
