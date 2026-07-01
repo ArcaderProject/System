@@ -4,3 +4,5 @@ out/
 .git/
 .idea/
 installer-gui/target/
+.cargo-registry/
+lb/cache/

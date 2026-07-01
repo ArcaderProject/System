@@ -15,6 +15,7 @@ lb/config/includes.chroot/opt/arcader/
 
 # Rust build artifacts
 installer-gui/target/
+.cargo-registry/
 lb/config/includes.chroot/usr/local/bin/arcader-installer
 
 .idea/

@@ -22,8 +22,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  setup:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+      build: ${{ steps.check.outputs.build }}
     steps:
       - uses: actions/checkout@v4
 
@@ -56,29 +60,90 @@ jobs:
             echo "build=true" >> "$GITHUB_OUTPUT"
           fi
 
+  build:
+    needs: setup
+    if: needs.setup.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, i386]
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Free disk space
-        if: steps.check.outputs.build == 'true'
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
                       /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
           sudo docker image prune -af || true
           df -h /
 
-      - name: Build ISOs
-        if: steps.check.outputs.build == 'true'
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build builder image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: arcader-iso-builder:latest
+          cache-from: type=gha,scope=builder-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=builder-${{ matrix.arch }}
+
+      - name: Cache live-build packages
+        uses: actions/cache@v4
+        with:
+          path: lb/cache
+          key: lb-${{ matrix.arch }}-${{ hashFiles('lb/config/package-lists/**', 'lb/build-iso.sh') }}
+          restore-keys: |
+            lb-${{ matrix.arch }}-
+
+      - name: Cache cargo build
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cargo-registry
+            installer-gui/target
+          key: cargo-${{ matrix.arch }}-${{ hashFiles('installer-gui/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ matrix.arch }}-
+
+      - name: Build ISO
         env:
-          ARCADER_VERSION: ${{ steps.ver.outputs.version }}
+          BUILD_IMAGE: "0"
+          ARCADER_VERSION: ${{ needs.setup.outputs.version }}
         run: |
           sudo modprobe loop || true
-          ./run.sh amd64 i386
+          ./run.sh ${{ matrix.arch }}
           ls -la out/
 
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iso-${{ matrix.arch }}
+          path: out/arcader-kiosk-${{ matrix.arch }}.iso
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    needs: [setup, build]
+    if: needs.setup.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download ISO artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: iso-*
+          merge-multiple: true
+          path: out
+
       - name: Publish release
-        if: steps.check.outputs.build == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.ver.outputs.tag }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.setup.outputs.tag }}
         run: |
+          ls -la out/
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" out/arcader-kiosk-amd64.iso out/arcader-kiosk-i386.iso --clobber
           else
