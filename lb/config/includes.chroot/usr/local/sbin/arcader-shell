@@ -1,0 +1,9 @@
+#!/bin/bash
+set -euo pipefail
+
+export HOME=/root
+export TERM="${TERM:-xterm-256color}"
+
+cd /root 2>/dev/null || cd /
+
+exec /bin/bash --login

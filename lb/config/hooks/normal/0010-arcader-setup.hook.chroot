@@ -85,6 +85,7 @@ systemctl enable NetworkManager.service
 
 chmod 755 /usr/local/sbin/arcader-install-backend
 chmod 755 /usr/local/sbin/arcader-usb
+chmod 755 /usr/local/sbin/arcader-shell
 chmod 755 /usr/local/bin/arcader-installer
 chmod 440 /etc/sudoers.d/arcader-installer
 chown root:root /etc/sudoers.d/arcader-installer
