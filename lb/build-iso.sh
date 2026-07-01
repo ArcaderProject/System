@@ -67,6 +67,10 @@ lb config noauto \
   --apt-indices false \
   --apt-recommends false \
   --memtest none \
+  --iso-volume "Arcader OS" \
+  --iso-application "Arcader OS" \
+  --iso-publisher "Arcader Project" \
+  --iso-preparer "Arcader Project; https://github.com/ArcaderProject" \
   --bootappend-live "boot=live components quiet splash loglevel=3 vt.global_cursor_default=0 rd.systemd.show_status=false systemd.show_status=false udev.log_level=3 rd.udev.log_level=3"
 
 lb build
