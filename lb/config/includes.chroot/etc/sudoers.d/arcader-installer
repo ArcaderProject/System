@@ -1,3 +1,4 @@
 arcader ALL=(root) NOPASSWD: /usr/local/sbin/arcader-install-backend
+arcader ALL=(root) NOPASSWD: /usr/local/sbin/arcader-usb
 arcader ALL=(root) NOPASSWD: /usr/bin/systemctl reboot
 arcader ALL=(root) NOPASSWD: /usr/bin/nmcli

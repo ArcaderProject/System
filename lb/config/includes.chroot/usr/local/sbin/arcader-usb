@@ -1,0 +1,51 @@
+#!/bin/bash
+set -euo pipefail
+
+MP=/run/arcader-usb
+ARCADER_UID=$(id -u arcader 2>/dev/null || echo 1000)
+ARCADER_GID=$(id -g arcader 2>/dev/null || echo 1000)
+
+usage() {
+	echo "usage: arcader-usb {mount <device>|unmount}" >&2
+	exit 2
+}
+
+case "${1:-}" in
+	mount)
+		dev="${2:-}"
+		[ -n "$dev" ] || usage
+		[ -b "$dev" ] || { echo "not a block device: $dev" >&2; exit 1; }
+
+		mkdir -p "$MP"
+
+		if mountpoint -q "$MP"; then
+			echo "$MP"
+			exit 0
+		fi
+
+		fstype=$(lsblk -no FSTYPE "$dev" | head -n1)
+		case "$fstype" in
+			vfat|exfat)
+				mount -t "$fstype" -o "rw,uid=$ARCADER_UID,gid=$ARCADER_GID,umask=0007" "$dev" "$MP"
+				;;
+			ntfs)
+				mount -t ntfs3 -o "rw,uid=$ARCADER_UID,gid=$ARCADER_GID,umask=0007" "$dev" "$MP" \
+					|| mount -o rw "$dev" "$MP"
+				;;
+			""|*)
+				mount -o rw "$dev" "$MP"
+				;;
+		esac
+
+		echo "$MP"
+		;;
+	unmount|umount)
+		if mountpoint -q "$MP"; then
+			sync
+			umount "$MP"
+		fi
+		;;
+	*)
+		usage
+		;;
+esac

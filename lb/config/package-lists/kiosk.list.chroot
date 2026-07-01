@@ -40,6 +40,8 @@ parted
 gdisk
 rsync
 dosfstools
+exfatprogs
+ntfs-3g
 e2fsprogs
 util-linux
 initramfs-tools
