@@ -8,16 +8,31 @@ case "$ARCH" in
   amd64)
     LINUX_IMAGE="linux-image-amd64"
     GRUB_EFI_PKG="grub-efi-amd64-bin"
+    RUST_TARGET="x86_64-unknown-linux-gnu"
     ;;
   i386)
     LINUX_IMAGE="linux-image-686-pae"
     GRUB_EFI_PKG="grub-efi-ia32-bin"
+    RUST_TARGET="i686-unknown-linux-gnu"
     ;;
   *)
     echo "ERROR: unsupported ARCH '$ARCH' (use amd64 or i386)" >&2
     exit 1
     ;;
 esac
+
+INSTALLER_SRC="/installer-gui"
+[ -d "$INSTALLER_SRC" ] || INSTALLER_SRC="$(cd /lb/.. 2>/dev/null && pwd)/installer-gui"
+if [ -d "$INSTALLER_SRC" ]; then
+  echo ">> Building graphical installer ($RUST_TARGET)"
+  ( cd "$INSTALLER_SRC" && cargo build --release --target "$RUST_TARGET" )
+  install -Dm755 \
+    "$INSTALLER_SRC/target/$RUST_TARGET/release/arcader-installer" \
+    config/includes.chroot/usr/local/bin/arcader-installer
+else
+  echo "ERROR: installer-gui source not found (looked in /installer-gui and ../installer-gui)" >&2
+  exit 1
+fi
 
 ARCADER_VERSION="${ARCADER_VERSION:-latest}"
 if [ "$ARCADER_VERSION" = "latest" ]; then

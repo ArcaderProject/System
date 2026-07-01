@@ -1,40 +1,58 @@
 #!/bin/bash
 set -euo pipefail
 
+DRY_RUN=0
+ROTATE=normal
+TARGET=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --dry-run) DRY_RUN=1 ;;
+    --rotate)  ROTATE="$2"; shift ;;
+    -*) echo "ERROR: unknown option '$1'" >&2; exit 2 ;;
+    *)  TARGET="$1" ;;
+  esac
+  shift
+done
+
+case "$ROTATE" in normal|inverted) ;; *) ROTATE=normal ;; esac
+
+[ -n "$TARGET" ] || { echo "ERROR: no target disk given" >&2; exit 2; }
+
 if [ "${EUID:-$(id -u)}" -ne 0 ]; then
-  exec sudo -n "$0" "$@"
+  echo "ERROR: must run as root" >&2
+  exit 2
 fi
 
-trap 'echo; echo "Installer failed at line $LINENO. Dropping to shell for diagnosis."; bash -i' ERR
+emit() {
+  local f="$1"; shift
+  printf '@@P %s %s\n' "$f" "$*"
+}
 
-clear
-cat <<'BANNER'
-==============================================================
-                      Arcader Installer
-==============================================================
-
- This will WIPE the chosen disk and install the kiosk system
- on it. After install the machine boots straight into kiosk
- mode from the internal disk; the USB is no longer required.
-
-BANNER
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo "DRY RUN: no changes will be made to /dev/$TARGET"
+  echo "[1/6] Partitioning /dev/$TARGET ...";  emit 0.02 "Partitioning disk"; sleep 1
+  echo "[2/6] Formatting filesystems ...";      emit 0.07 "Formatting filesystems"; sleep 1
+  echo "[3/6] Copying system to disk ...";      emit 0.10 "Scanning system files…"; sleep 1
+  for p in 4 17 33 48 62 77 89 100; do
+    frac=$(awk -v p="$p" 'BEGIN{printf "%.4f", 0.10 + 0.75 * p / 100}')
+    emit "$frac" "Copying system to disk — ${p}%"
+    sleep 0.3
+  done
+  echo "[4/6] Preparing chroot ...";            emit 0.86 "Preparing chroot"; sleep 1
+  echo "[5/6] Installing bootloader and regenerating initramfs ..."; emit 0.90 "Installing bootloader"; sleep 1
+  echo "[6/6] Unmounting ...";                   emit 0.97 "Unmounting"; sleep 1
+  echo "Install complete (dry run)."
+  exit 0
+fi
 
 LIVE_PART="$(findmnt -no SOURCE /run/live/medium 2>/dev/null || true)"
 LIVE_DEV=""
 if [ -n "$LIVE_PART" ]; then
-  LIVE_DEV="$(lsblk -no pkname "$LIVE_PART" 2>/dev/null || true)"
+  LIVE_DEV="$(lsblk -no pkname "$LIVE_PART" 2>/dev/null | head -n1 || true)"
 fi
 
-echo "Detected disks:"
-echo
-lsblk -dno NAME,SIZE,MODEL,TRAN -e7,11 | \
-  awk -v live="$LIVE_DEV" '{ tag = ($1 == live ? "  [live USB — excluded]" : ""); printf "  %-12s %-10s %-30s %-6s%s\n", $1, $2, $3" "$4, $NF, tag }'
-echo
-
-read -rp "Target disk name (e.g. sda, nvme0n1) or 'quit': " TARGET
-[ "$TARGET" = "quit" ] && exit 1
-[ -b "/dev/$TARGET" ] || { echo "ERROR: /dev/$TARGET is not a block device"; exit 1; }
-[ "$TARGET" = "$LIVE_DEV" ] && { echo "ERROR: refusing to install onto the live USB"; exit 1; }
+[ -b "/dev/$TARGET" ] || { echo "ERROR: /dev/$TARGET is not a block device" >&2; exit 1; }
+[ "$TARGET" = "$LIVE_DEV" ] && { echo "ERROR: refusing to install onto the live USB" >&2; exit 1; }
 
 DEV="/dev/$TARGET"
 case "$DEV" in
@@ -48,19 +66,15 @@ DEB_ARCH="$(dpkg --print-architecture)"
 case "$DEB_ARCH" in
   amd64) EFI_TARGET=x86_64-efi; EFI_GRUB=grubx64.efi;  EFI_BOOT=BOOTX64.EFI  ;;
   i386)  EFI_TARGET=i386-efi;   EFI_GRUB=grubia32.efi; EFI_BOOT=BOOTIA32.EFI ;;
-  *)     echo "ERROR: unsupported architecture '$DEB_ARCH'"; exit 1 ;;
+  *)     echo "ERROR: unsupported architecture '$DEB_ARCH'" >&2; exit 1 ;;
 esac
 
-echo
 echo "Architecture  : $DEB_ARCH"
 echo "Firmware mode : $MODE"
 echo "Target disk   : $DEV"
-echo
-read -rp "Type 'YES' (uppercase) to ERASE $DEV and install: " ANS
-[ "$ANS" = "YES" ] || { echo "Aborted."; exit 1; }
 
-echo
 echo "[1/6] Partitioning $DEV ..."
+emit 0.02 "Partitioning disk"
 swapoff -a || true
 umount -R "${PFX}"* 2>/dev/null || true
 wipefs -af "$DEV"
@@ -77,6 +91,7 @@ partprobe "$DEV" || true
 udevadm settle || sleep 2
 
 echo "[2/6] Formatting filesystems ..."
+emit 0.07 "Formatting filesystems"
 mkfs.fat -F32 -n EFI    "${PFX}2"
 mkfs.ext4 -F -L arcader  "${PFX}3"
 
@@ -97,7 +112,10 @@ pkill -u arcader -x arcaderui 2>/dev/null || true
 sleep 1
 
 echo "[3/6] Copying system to disk (this can take a few minutes) ..."
-rsync -aAXH --info=progress2 \
+emit 0.10 "Scanning system files…"
+COPY_LO=0.10
+COPY_HI=0.85
+rsync -aAXH --no-inc-recursive --info=progress2 \
   --exclude='/proc/*' \
   --exclude='/sys/*' \
   --exclude='/dev/*' \
@@ -111,7 +129,16 @@ rsync -aAXH --info=progress2 \
   --exclude='/var/lib/arcader/data/*_extract' \
   --exclude='/etc/fstab' \
   --exclude='/boot/efi/*' \
-  / "$MNT/"
+  / "$MNT/" \
+  | stdbuf -oL tr '\r' '\n' \
+  | while IFS= read -r line; do
+      if [[ "$line" =~ ([0-9]+)% ]]; then
+        pct="${BASH_REMATCH[1]}"
+        frac=$(awk -v lo="$COPY_LO" -v hi="$COPY_HI" -v p="$pct" \
+          'BEGIN{printf "%.4f", lo + (hi - lo) * p / 100}')
+        emit "$frac" "Copying system to disk — ${pct}%"
+      fi
+    done
 
 mkdir -p "$MNT"/{proc,sys,dev,run,tmp,mnt,media}
 
@@ -123,7 +150,13 @@ UUID=$EFI_UUID   /boot/efi  vfat  defaults,umask=0077        0  1
 tmpfs            /tmp       tmpfs defaults,nosuid,nodev      0  0
 EOF
 
+mkdir -p "$MNT/etc/arcader"
+cat > "$MNT/etc/arcader/display.conf" <<EOF
+ROTATE=$ROTATE
+EOF
+
 echo "[4/6] Preparing chroot ..."
+emit 0.86 "Preparing chroot"
 mount --bind /dev     "$MNT/dev"
 mount --bind /dev/pts "$MNT/dev/pts"
 mount -t proc  proc   "$MNT/proc"
@@ -134,10 +167,12 @@ if [ "$MODE" = "uefi" ]; then
 fi
 
 echo "[5/6] Installing bootloader ($MODE) and regenerating initramfs ..."
+emit 0.88 "Removing live-boot components"
 chroot "$MNT" /usr/bin/env DEBIAN_FRONTEND=noninteractive bash -e <<EOC
 apt-get -y purge live-boot live-boot-doc live-config live-config-systemd live-tools 2>/dev/null || true
 apt-get -y autoremove --purge 2>/dev/null || true
 
+printf '@@P 0.91 %s\n' 'Regenerating initramfs'
 update-initramfs -u -k all
 
 cat > /etc/default/grub <<EOG
@@ -151,6 +186,7 @@ GRUB_DISABLE_RECOVERY=true
 GRUB_DISABLE_OS_PROBER=true
 EOG
 
+printf '@@P 0.94 %s\n' 'Installing GRUB bootloader'
 if [ "$MODE" = "uefi" ]; then
   grub-install --target=$EFI_TARGET --efi-directory=/boot/efi --bootloader-id=arcader --recheck
   mkdir -p /boot/efi/EFI/BOOT
@@ -158,6 +194,7 @@ if [ "$MODE" = "uefi" ]; then
 else
   grub-install --target=i386-pc --recheck "$DEV"
 fi
+printf '@@P 0.96 %s\n' 'Writing GRUB configuration'
 update-grub
 
 echo "installed=\$(date -Iseconds)" > /etc/arcader-installed
@@ -171,13 +208,9 @@ rm -rf /var/lib/arcader/data/temp_cores_extract \
 EOC
 
 echo "[6/6] Unmounting ..."
+emit 0.98 "Flushing and unmounting"
 sync
 umount -lR "$MNT" || true
 
-echo
-echo "=============================================================="
-echo "  Install complete."
-echo "  Remove the USB stick, then press Enter to reboot."
-echo "=============================================================="
-read -r _
-systemctl reboot
+echo "Install complete."
+exit 0

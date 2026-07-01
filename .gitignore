@@ -13,6 +13,10 @@ lb/*.log
 lb/config/package-lists/arch.list.chroot
 lb/config/includes.chroot/opt/arcader/
 
+# Rust build artifacts
+installer-gui/target/
+lb/config/includes.chroot/usr/local/bin/arcader-installer
+
 .idea/
 .DS_Store
 Thumbs.db

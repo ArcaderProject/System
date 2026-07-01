@@ -15,13 +15,25 @@ mkdir -p $USER_HOME/.config/openbox
 cat > $USER_HOME/.config/openbox/autostart <<'EOF'
 #!/bin/bash
 
-pulseaudio --start &
-
 xset s off
 xset -dpms
 xset s noblank
 
 unclutter -idle 0.1 -root &
+
+if [ ! -f /etc/arcader-installed ]; then
+  exec /usr/local/bin/arcader-installer
+fi
+
+if [ -f /etc/arcader/display.conf ]; then
+  . /etc/arcader/display.conf
+  if [ -n "${ROTATE:-}" ] && [ "$ROTATE" != normal ]; then
+    OUT="$(xrandr | awk '/ connected/{print $1; exit}')"
+    [ -n "$OUT" ] && xrandr --output "$OUT" --rotate "$ROTATE"
+  fi
+fi
+
+pulseaudio --start &
 
 picom -b 2>/dev/null || true
 
@@ -69,8 +81,10 @@ chown -R $ARCADER_USER:$ARCADER_USER $USER_HOME/.config $USER_HOME/.xinitrc
 plymouth-set-default-theme -R arcader
 
 systemctl set-default multi-user.target
+systemctl enable NetworkManager.service
 
-chmod 755 /usr/local/sbin/arcader-install
+chmod 755 /usr/local/sbin/arcader-install-backend
+chmod 755 /usr/local/bin/arcader-installer
 chmod 440 /etc/sudoers.d/arcader-installer
 chown root:root /etc/sudoers.d/arcader-installer
 
