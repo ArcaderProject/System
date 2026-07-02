@@ -9,5 +9,5 @@ if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
 fi
 
 if [ "${XDG_VTNR:-1}" = "1" ]; then
-  exec startx
+  exec startx -- -quiet -nolisten tcp -background none vt1 >/dev/null 2>&1
 fi
