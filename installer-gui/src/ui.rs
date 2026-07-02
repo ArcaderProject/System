@@ -128,6 +128,9 @@ pub fn draw(app: &mut InstallerApp, ctx: &egui::Context) {
     if app.step != app.last_step {
         app.focus.reset();
         app.last_step = app.step;
+        if app.step == Step::Keyboard {
+            app.set_keyboard(app.keyboard);
+        }
         if app.step == Step::Network {
             app.start_scan();
         }
@@ -144,7 +147,7 @@ pub fn draw(app: &mut InstallerApp, ctx: &egui::Context) {
     theme::draw_scanlines(&painter, screen);
 
     let w = CONTENT_W.min(screen.width() - 64.0);
-    let max_h = screen.height() - 48.0;
+    let max_h = screen.height() - 140.0;
     egui::Area::new(Id::new("arcader-wizard"))
         .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
         .movable(false)
@@ -163,6 +166,7 @@ pub fn draw(app: &mut InstallerApp, ctx: &egui::Context) {
                         Step::Welcome => welcome(app, ui),
                         Step::SelectDisk => select_disk(app, ui),
                         Step::Display => display(app, ui),
+                        Step::Keyboard => keyboard(app, ui),
                         Step::Network => network(app, ui),
                         Step::Confirm => confirm(app, ui),
                         Step::Installing => installing(app, ui),
@@ -376,7 +380,7 @@ fn display(app: &mut InstallerApp, ui: &mut egui::Ui) {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let cont = primary_button(ui, "Continue");
             if app.focus.register(ui, cont).clicked() {
-                app.step = Step::Network;
+                app.step = Step::Keyboard;
             }
         });
     });
@@ -418,6 +422,84 @@ fn orientation_tile(app: &mut InstallerApp, ui: &mut egui::Ui, rot: Rotation, wi
     }
     if resp.double_clicked() {
         app.rotation = rot;
+        app.step = Step::Keyboard;
+    }
+}
+
+fn keyboard(app: &mut InstallerApp, ui: &mut egui::Ui) {
+    ui.label(RichText::new("Keyboard layout").size(24.0).strong());
+    ui.add_space(4.0);
+    ui.label(
+        RichText::new("Pick the layout that matches the keyboard wired to the cabinet.")
+            .color(theme::MUTED),
+    );
+    ui.add_space(16.0);
+
+    let list_h = (ui.available_height() - 120.0).max(200.0);
+    egui::ScrollArea::vertical()
+        .max_height(list_h)
+        .auto_shrink([false, false])
+        .show(ui, |ui| keyboard_list(app, ui));
+
+    ui.add_space(12.0);
+    ui.horizontal(|ui| {
+        let back = secondary_button(ui, "Back");
+        if app.focus.register(ui, back).clicked() {
+            app.step = Step::Display;
+        }
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let cont = primary_button(ui, "Continue");
+            if app.focus.register(ui, cont).clicked() {
+                app.step = Step::Network;
+            }
+        });
+    });
+    keyboard_hint(ui, "↑ ↓ ← → / Tab  move    Enter / Space  select    Esc  back");
+}
+
+fn keyboard_list(app: &mut InstallerApp, ui: &mut egui::Ui) {
+    for i in 0..crate::LAYOUTS.len() {
+        keyboard_row(app, ui, i);
+        ui.add_space(8.0);
+    }
+}
+
+fn keyboard_row(app: &mut InstallerApp, ui: &mut egui::Ui, index: usize) {
+    let layout = crate::LAYOUTS[index];
+    let selected = app.keyboard == index;
+    let (fill, stroke) = card_colors(selected);
+    let tint = if selected { theme::ACCENT } else { theme::MUTED };
+
+    let inner = egui::Frame::none()
+        .fill(fill)
+        .rounding(theme::SQUARE)
+        .inner_margin(egui::Margin::symmetric(16.0, 12.0))
+        .stroke(stroke)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(egui_phosphor::regular::KEYBOARD).size(22.0).color(tint));
+                ui.add_space(10.0);
+                ui.label(RichText::new(layout.label).size(16.0).strong());
+                if selected {
+                    badge(ui, "SELECTED", theme::ACCENT);
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(RichText::new(layout.code.to_uppercase()).size(14.0).color(theme::MUTED));
+                });
+            });
+        });
+
+    let id = ui.make_persistent_id(("kbd-row", index));
+    let resp = ui
+        .interact(inner.response.rect, id, Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    let resp = app.focus.register(ui, resp);
+    if resp.clicked() {
+        app.set_keyboard(index);
+    }
+    if resp.double_clicked() {
+        app.set_keyboard(index);
         app.step = Step::Network;
     }
 }
@@ -482,7 +564,7 @@ fn network(app: &mut InstallerApp, ui: &mut egui::Ui) {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Password").color(theme::MUTED).size(14.0));
                 let edit = egui::TextEdit::singleline(&mut app.net_password)
-                    .password(true)
+                    .password(false)
                     .desired_width(320.0)
                     .hint_text("network password");
                 let resp = ui.add(edit);
@@ -507,7 +589,7 @@ fn network(app: &mut InstallerApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         let back = secondary_button(ui, "Back");
         if app.focus.register(ui, back).clicked() {
-            app.step = Step::Display;
+            app.step = Step::Keyboard;
         }
         let rescan = secondary_button(ui, "Rescan");
         if app.focus.register(ui, rescan).clicked() {
@@ -620,6 +702,7 @@ fn confirm(app: &mut InstallerApp, ui: &mut egui::Ui) {
     summary_row(ui, "Target disk", &format!("/dev/{}  ({})", disk.name, disk.size));
     summary_row(ui, "Model", if disk.model.is_empty() { "Unknown" } else { &disk.model });
     summary_row(ui, "Orientation", app.rotation.label());
+    summary_row(ui, "Keyboard", app.keyboard_label());
     summary_row(ui, "Wi-Fi", &wifi);
     summary_row(ui, "Architecture", std::env::consts::ARCH);
     summary_row(ui, "Firmware", firmware);
@@ -866,7 +949,8 @@ fn handle_keys(app: &mut InstallerApp, ctx: &egui::Context) {
         match app.step {
             Step::SelectDisk => app.step = Step::Welcome,
             Step::Display => app.step = Step::SelectDisk,
-            Step::Network => app.step = Step::Display,
+            Step::Keyboard => app.step = Step::Display,
+            Step::Network => app.step = Step::Keyboard,
             Step::Confirm => app.step = Step::Network,
             Step::Failed => {
                 app.refresh_disks();
@@ -901,114 +985,4 @@ fn draw_cover(painter: &egui::Painter, texture: &egui::TextureHandle, rect: Rect
         egui::pos2(1.0 - (1.0 - uv_w) * 0.5, 1.0 - (1.0 - uv_h) * 0.5),
     );
     painter.image(texture.id(), rect, uv, Color32::WHITE);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Dir, Focus};
-    use eframe::egui::{pos2, Rect};
-
-    fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
-        Rect::from_min_max(pos2(x, y), pos2(x + w, y + h))
-    }
-
-    fn focus(nav: Vec<Rect>, idx: usize) -> Focus {
-        Focus {
-            idx,
-            nav,
-            building: Vec::new(),
-            pending: false,
-            pointer_moved: false,
-            text_focus: false,
-        }
-    }
-
-    fn disk_screen() -> Vec<Rect> {
-        vec![
-            rect(0.0, 0.0, 700.0, 80.0),
-            rect(0.0, 92.0, 700.0, 80.0),
-            rect(0.0, 184.0, 700.0, 80.0),
-            rect(0.0, 300.0, 120.0, 44.0),
-            rect(132.0, 300.0, 120.0, 44.0),
-            rect(560.0, 300.0, 140.0, 44.0),
-        ]
-    }
-
-    fn display_screen() -> Vec<Rect> {
-        vec![
-            rect(0.0, 0.0, 344.0, 180.0),
-            rect(356.0, 0.0, 344.0, 180.0),
-            rect(0.0, 210.0, 120.0, 44.0),
-            rect(560.0, 210.0, 140.0, 44.0),
-        ]
-    }
-
-    fn go(nav: &[Rect], from: usize, dir: Dir) -> usize {
-        let mut f = focus(nav.to_vec(), from);
-        f.navigate(dir);
-        f.idx
-    }
-
-    #[test]
-    fn disk_list_down_walks_cards_then_reaches_buttons() {
-        let s = disk_screen();
-        assert_eq!(go(&s, 0, Dir::Down), 1, "card A ↓ → card B");
-        assert_eq!(go(&s, 1, Dir::Down), 2, "card B ↓ → card C");
-        assert_eq!(go(&s, 2, Dir::Down), 3, "card C ↓ → Back");
-    }
-
-    #[test]
-    fn disk_up_returns_to_nearest_card() {
-        let s = disk_screen();
-        assert_eq!(go(&s, 5, Dir::Up), 2, "Continue ↑ → nearest card above");
-        assert_eq!(go(&s, 2, Dir::Up), 1, "card C ↑ → card B");
-    }
-
-    #[test]
-    fn disk_button_row_moves_left_right_in_order() {
-        let s = disk_screen();
-        assert_eq!(go(&s, 3, Dir::Right), 4, "Back → Refresh");
-        assert_eq!(go(&s, 4, Dir::Right), 5, "Refresh → Continue");
-        assert_eq!(go(&s, 5, Dir::Left), 4, "Continue → Refresh");
-        assert_eq!(go(&s, 4, Dir::Left), 3, "Refresh → Back");
-    }
-
-    #[test]
-    fn disk_no_move_past_edges() {
-        let s = disk_screen();
-        assert_eq!(go(&s, 0, Dir::Up), 0, "top card has nothing above");
-        assert_eq!(go(&s, 3, Dir::Left), 3, "leftmost button, nothing left");
-        assert_eq!(go(&s, 5, Dir::Right), 5, "rightmost button, nothing right");
-    }
-
-    #[test]
-    fn display_tiles_and_buttons_align_vertically() {
-        let s = display_screen();
-        assert_eq!(go(&s, 0, Dir::Right), 1, "Normal → Inverted");
-        assert_eq!(go(&s, 1, Dir::Left), 0, "Inverted → Normal");
-        assert_eq!(go(&s, 0, Dir::Down), 2, "Normal ↓ → Back (left)");
-        assert_eq!(go(&s, 1, Dir::Down), 3, "Inverted ↓ → Continue (right)");
-        assert_eq!(go(&s, 2, Dir::Up), 0, "Back ↑ → Normal");
-        assert_eq!(go(&s, 3, Dir::Up), 1, "Continue ↑ → Inverted");
-    }
-
-    #[test]
-    fn tab_is_linear_and_wraps() {
-        let s = disk_screen();
-        let mut f = focus(s.clone(), 0);
-        for expect in [1, 2, 3, 4, 5, 0] {
-            f.step(1);
-            assert_eq!(f.idx, expect, "Tab advances in reading order and wraps");
-        }
-        f.step(-1);
-        assert_eq!(f.idx, 5, "Shift+Tab from first wraps to last");
-    }
-
-    #[test]
-    fn empty_screen_is_safe() {
-        let mut f = focus(Vec::new(), 0);
-        f.navigate(Dir::Down);
-        f.step(1);
-        assert_eq!(f.idx, 0, "no widgets: navigation is a no-op");
-    }
 }

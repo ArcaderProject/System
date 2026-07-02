@@ -20,6 +20,7 @@ pub enum Step {
     Welcome,
     SelectDisk,
     Display,
+    Keyboard,
     Network,
     Confirm,
     Installing,
@@ -28,15 +29,41 @@ pub enum Step {
 }
 
 impl Step {
-    pub const INDICATOR: [(&'static str, Step); 6] = [
+    pub const INDICATOR: [(&'static str, Step); 7] = [
         ("Welcome", Step::Welcome),
         ("Disk", Step::SelectDisk),
         ("Display", Step::Display),
+        ("Keyboard", Step::Keyboard),
         ("Wi-Fi", Step::Network),
         ("Confirm", Step::Confirm),
         ("Install", Step::Installing),
     ];
 }
+
+#[derive(Clone, Copy)]
+pub struct KeyboardLayout {
+    pub code: &'static str,
+    pub label: &'static str,
+}
+
+pub const LAYOUTS: [KeyboardLayout; 16] = [
+    KeyboardLayout { code: "us", label: "English (US)" },
+    KeyboardLayout { code: "gb", label: "English (UK)" },
+    KeyboardLayout { code: "de", label: "German" },
+    KeyboardLayout { code: "fr", label: "French" },
+    KeyboardLayout { code: "es", label: "Spanish" },
+    KeyboardLayout { code: "it", label: "Italian" },
+    KeyboardLayout { code: "pt", label: "Portuguese" },
+    KeyboardLayout { code: "nl", label: "Dutch" },
+    KeyboardLayout { code: "se", label: "Swedish" },
+    KeyboardLayout { code: "no", label: "Norwegian" },
+    KeyboardLayout { code: "dk", label: "Danish" },
+    KeyboardLayout { code: "fi", label: "Finnish" },
+    KeyboardLayout { code: "pl", label: "Polish" },
+    KeyboardLayout { code: "ru", label: "Russian" },
+    KeyboardLayout { code: "ch", label: "Swiss" },
+    KeyboardLayout { code: "ca", label: "Canadian (Fr)" },
+];
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum NetStatus {
@@ -83,6 +110,7 @@ pub struct InstallerApp {
     pub(crate) disk_error: Option<String>,
     pub(crate) selected: usize,
     pub(crate) rotation: Rotation,
+    pub(crate) keyboard: usize,
     pub(crate) target_disk: Option<String>,
     pub(crate) confirm_ack: bool,
     pub(crate) dry_run: bool,
@@ -121,6 +149,7 @@ impl InstallerApp {
             disk_error,
             selected,
             rotation: Rotation::Normal,
+            keyboard: LAYOUTS.iter().position(|l| l.code == "us").unwrap_or(0),
             target_disk: None,
             confirm_ack: false,
             dry_run,
@@ -156,6 +185,26 @@ impl InstallerApp {
 
     pub(crate) fn selected_disk(&self) -> Option<&Disk> {
         self.disks.get(self.selected).filter(|d| !d.is_live)
+    }
+
+    pub(crate) fn keyboard_code(&self) -> &'static str {
+        LAYOUTS.get(self.keyboard).map_or("us", |l| l.code)
+    }
+
+    pub(crate) fn keyboard_label(&self) -> &'static str {
+        LAYOUTS.get(self.keyboard).map_or("English (US)", |l| l.label)
+    }
+
+    pub(crate) fn set_keyboard(&mut self, index: usize) {
+        if index >= LAYOUTS.len() {
+            return;
+        }
+        self.keyboard = index;
+        let _ = std::process::Command::new("setxkbmap")
+            .arg(LAYOUTS[index].code)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
     }
 
     pub(crate) fn start_scan(&mut self) {
@@ -214,7 +263,7 @@ impl InstallerApp {
         self.progress = 0.0;
         self.phase = "Starting…".to_string();
         self.failed_reason = None;
-        self.job = Some(InstallJob::start(&disk, self.dry_run, self.rotation));
+        self.job = Some(InstallJob::start(&disk, self.dry_run, self.rotation, self.keyboard_code()));
         self.step = Step::Installing;
     }
 

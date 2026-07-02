@@ -3,11 +3,13 @@ set -euo pipefail
 
 DRY_RUN=0
 ROTATE=normal
+KEYMAP=us
 TARGET=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --rotate)  ROTATE="$2"; shift ;;
+    --keymap)  KEYMAP="$2"; shift ;;
     -*) echo "ERROR: unknown option '$1'" >&2; exit 2 ;;
     *)  TARGET="$1" ;;
   esac
@@ -15,6 +17,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 case "$ROTATE" in normal|inverted) ;; *) ROTATE=normal ;; esac
+case "$KEYMAP" in ''|*[!a-z0-9]*) KEYMAP=us ;; esac
 
 [ -n "$TARGET" ] || { echo "ERROR: no target disk given" >&2; exit 2; }
 
@@ -153,6 +156,15 @@ EOF
 mkdir -p "$MNT/etc/arcader"
 cat > "$MNT/etc/arcader/display.conf" <<EOF
 ROTATE=$ROTATE
+KEYMAP=$KEYMAP
+EOF
+
+cat > "$MNT/etc/default/keyboard" <<EOF
+XKBMODEL="pc105"
+XKBLAYOUT="$KEYMAP"
+XKBVARIANT=""
+XKBOPTIONS=""
+BACKSPACE="guess"
 EOF
 
 echo "[4/6] Preparing chroot ..."
