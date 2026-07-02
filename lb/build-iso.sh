@@ -57,6 +57,29 @@ DEB_DEST=config/includes.chroot/opt/arcader/arcader.deb
 echo ">> Fetching $DEB_URL"
 curl -fL --retry 3 --retry-delay 2 -o "$DEB_DEST" "$DEB_URL"
 
+case "$ARCH" in
+  amd64) FE_ASSET_ARCH="x86_64" ;;
+  i386)  FE_ASSET_ARCH="x86_32" ;;
+esac
+FRONTEND_REPO="${FRONTEND_REPO:-ArcaderProject/Frontend}"
+FRONTEND_TAG="${FRONTEND_TAG:-latest}"
+if [ "$FRONTEND_TAG" = "latest" ]; then
+  FE_JSON="$(curl -fsSL "https://api.github.com/repos/${FRONTEND_REPO}/releases/latest")"
+  FRONTEND_TAG="$(printf '%s' "$FE_JSON" | awk -F'"' '/"tag_name"/{v=$4} END{print v}')"
+fi
+[ -n "$FRONTEND_TAG" ] || { echo "ERROR: could not resolve Frontend version" >&2; exit 1; }
+FE_ASSET="arcaderui-linux-${FE_ASSET_ARCH}.tar.gz"
+FE_URL="https://github.com/${FRONTEND_REPO}/releases/download/${FRONTEND_TAG}/${FE_ASSET}"
+FE_DIR="config/includes.chroot/var/lib/arcader/frontends/main"
+mkdir -p "$FE_DIR"
+echo ">> Pre-seeding frontend $FE_URL"
+FE_TMP="$(mktemp)"
+curl -fL --retry 3 --retry-delay 2 -o "$FE_TMP" "$FE_URL"
+tar -xzf "$FE_TMP" -C "$FE_DIR"
+rm -f "$FE_TMP"
+printf '%s' "$FRONTEND_TAG" > "$FE_DIR/.arcader-version"
+ln -sfn main config/includes.chroot/var/lib/arcader/frontends/current
+
 lb config noauto \
   --mode debian \
   --architectures "$ARCH" \

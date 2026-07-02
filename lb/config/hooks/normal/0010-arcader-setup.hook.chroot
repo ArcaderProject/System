@@ -11,6 +11,10 @@ chown -R $ARCADER_USER:$ARCADER_USER $USER_HOME
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends /opt/arcader/arcader.deb
 rm -rf /opt/arcader
 
+if [ -d /var/lib/arcader/frontends ]; then
+  chown -R $ARCADER_USER:$ARCADER_USER /var/lib/arcader/frontends
+fi
+
 mkdir -p $USER_HOME/.config/openbox
 cat > $USER_HOME/.config/openbox/autostart <<'EOF'
 #!/bin/bash
@@ -39,9 +43,6 @@ picom -b 2>/dev/null || true
 
 sleep 2
 systemctl --user start arcaderd.service 2>/dev/null || /usr/bin/arcaderd &
-sleep 1
-
-/usr/bin/arcaderui --fullscreen &
 EOF
 chmod +x $USER_HOME/.config/openbox/autostart
 
@@ -49,11 +50,6 @@ cat > $USER_HOME/.config/openbox/menu.xml <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <openbox_menu xmlns="http://openbox.org/3.4/menu">
   <menu id="root-menu" label="Openbox 3">
-    <item label="Arcader">
-      <action name="Execute">
-        <command>/usr/bin/arcaderui</command>
-      </action>
-    </item>
   </menu>
 </openbox_menu>
 EOF
