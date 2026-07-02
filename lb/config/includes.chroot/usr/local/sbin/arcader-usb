@@ -25,8 +25,13 @@ case "${1:-}" in
 
 		fstype=$(lsblk -no FSTYPE "$dev" | head -n1)
 		case "$fstype" in
-			vfat|exfat)
-				mount -t "$fstype" -o "rw,uid=$ARCADER_UID,gid=$ARCADER_GID,umask=0007" "$dev" "$MP"
+			vfat)
+				fsck.vfat -a "$dev" || true
+				mount -t vfat -o "rw,uid=$ARCADER_UID,gid=$ARCADER_GID,umask=0007" "$dev" "$MP"
+				;;
+			exfat)
+				fsck.exfat -y "$dev" || true
+				mount -t exfat -o "rw,uid=$ARCADER_UID,gid=$ARCADER_GID,umask=0007" "$dev" "$MP"
 				;;
 			ntfs)
 				mount -t ntfs3 -o "rw,uid=$ARCADER_UID,gid=$ARCADER_GID,umask=0007" "$dev" "$MP" \
