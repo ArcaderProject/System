@@ -62,6 +62,7 @@ libxrandr2
 libxi6
 libxext6
 libxfixes3
+systemd-timesyncd
 network-manager
 wpasupplicant
 firmware-iwlwifi
