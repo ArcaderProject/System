@@ -360,7 +360,7 @@ fn display(app: &mut InstallerApp, ui: &mut egui::Ui) {
     ui.label(RichText::new("Screen orientation").size(24.0).strong());
     ui.add_space(4.0);
     ui.label(
-        RichText::new("Choose how the picture is rotated on the cabinet's monitor.")
+        RichText::new("Choose how the picture is rotated on the arcade machine's monitor.")
             .color(theme::MUTED),
     );
     ui.add_space(18.0);
@@ -430,7 +430,7 @@ fn keyboard(app: &mut InstallerApp, ui: &mut egui::Ui) {
     ui.label(RichText::new("Keyboard layout").size(24.0).strong());
     ui.add_space(4.0);
     ui.label(
-        RichText::new("Pick the layout that matches the keyboard wired to the cabinet.")
+        RichText::new("Pick the layout that matches the keyboard wired to the arcade machine.")
             .color(theme::MUTED),
     );
     ui.add_space(16.0);
@@ -528,7 +528,7 @@ fn network(app: &mut InstallerApp, ui: &mut egui::Ui) {
     ui.label(RichText::new("Wi-Fi").size(24.0).strong());
     ui.add_space(4.0);
     ui.label(
-        RichText::new("Optionally connect so the cabinet can fetch updates. You can skip this.")
+        RichText::new("Optionally connect so the arcade machine can fetch updates. You can skip this.")
             .color(theme::MUTED),
     );
     ui.add_space(12.0);
