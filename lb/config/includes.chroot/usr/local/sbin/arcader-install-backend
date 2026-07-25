@@ -83,26 +83,46 @@ umount -R "${PFX}"* 2>/dev/null || true
 wipefs -af "$DEV"
 sgdisk --zap-all "$DEV" >/dev/null
 
-parted -s "$DEV" mklabel gpt
-parted -s "$DEV" mkpart bios_boot 1MiB 2MiB
-parted -s "$DEV" set 1 bios_grub on
-parted -s "$DEV" mkpart ESP fat32 2MiB 514MiB
-parted -s "$DEV" set 2 esp on
-parted -s "$DEV" mkpart root ext4 514MiB 100%
+EFI_PART=""
+if [ "$MODE" = "uefi" ]; then
+  parted -s "$DEV" mklabel gpt
+  parted -s "$DEV" mkpart bios_boot 1MiB 2MiB
+  parted -s "$DEV" set 1 bios_grub on
+  parted -s "$DEV" mkpart ESP fat32 2MiB 514MiB
+  parted -s "$DEV" set 2 esp on
+  parted -s "$DEV" mkpart root ext4 514MiB 100%
+  EFI_PART="${PFX}2"
+  ROOT_PART="${PFX}3"
+else
+  parted -s "$DEV" mklabel msdos
+  parted -s "$DEV" mkpart primary ext4 1MiB 100%
+  parted -s "$DEV" set 1 boot on
+  ROOT_PART="${PFX}1"
+fi
 
 partprobe "$DEV" || true
 udevadm settle || sleep 2
 
+for _ in {1..20}; do
+  if [ -b "$ROOT_PART" ]; then break; fi
+  sleep 0.5
+done
+[ -b "$ROOT_PART" ] || { echo "ERROR: $ROOT_PART did not appear after partitioning" >&2; exit 1; }
+
 echo "[2/6] Formatting filesystems ..."
 emit 0.07 "Formatting filesystems"
-mkfs.fat -F32 -n EFI    "${PFX}2"
-mkfs.ext4 -F -L arcader  "${PFX}3"
+if [ -n "$EFI_PART" ]; then
+  mkfs.fat -F32 -n EFI "$EFI_PART"
+fi
+mkfs.ext4 -F -L arcader "$ROOT_PART"
 
 MNT=/mnt/install
 mkdir -p "$MNT"
-mount "${PFX}3" "$MNT"
-mkdir -p "$MNT/boot/efi"
-mount "${PFX}2" "$MNT/boot/efi"
+mount "$ROOT_PART" "$MNT"
+if [ -n "$EFI_PART" ]; then
+  mkdir -p "$MNT/boot/efi"
+  mount "$EFI_PART" "$MNT/boot/efi"
+fi
 
 echo "Stopping arcaderd on the live system before copy ..."
 ARCADER_UID="$(id -u arcader 2>/dev/null || echo '')"
@@ -118,6 +138,7 @@ echo "[3/6] Copying system to disk (this can take a few minutes) ..."
 emit 0.10 "Scanning system files…"
 COPY_LO=0.10
 COPY_HI=0.85
+RSYNC_STATUS=0
 rsync -aAXH --no-inc-recursive --info=progress2 \
   --exclude='/proc/*' \
   --exclude='/sys/*' \
@@ -141,17 +162,27 @@ rsync -aAXH --no-inc-recursive --info=progress2 \
           'BEGIN{printf "%.4f", lo + (hi - lo) * p / 100}')
         emit "$frac" "Copying system to disk — ${pct}%"
       fi
-    done
+    done || RSYNC_STATUS=$?
+
+case "$RSYNC_STATUS" in
+  0|23|24) ;;
+  *) echo "ERROR: copying the system failed (rsync exit $RSYNC_STATUS)" >&2; exit 1 ;;
+esac
 
 mkdir -p "$MNT"/{proc,sys,dev,run,tmp,mnt,media}
 
-ROOT_UUID="$(blkid -s UUID -o value "${PFX}3")"
-EFI_UUID="$(blkid -s UUID -o value  "${PFX}2")"
+ROOT_UUID="$(blkid -s UUID -o value "$ROOT_PART")"
 cat > "$MNT/etc/fstab" <<EOF
 UUID=$ROOT_UUID  /          ext4  defaults,noatime           0  1
-UUID=$EFI_UUID   /boot/efi  vfat  defaults,umask=0077        0  1
 tmpfs            /tmp       tmpfs defaults,nosuid,nodev      0  0
 EOF
+
+if [ -n "$EFI_PART" ]; then
+  EFI_UUID="$(blkid -s UUID -o value "$EFI_PART")"
+  cat >> "$MNT/etc/fstab" <<EOF
+UUID=$EFI_UUID   /boot/efi  vfat  defaults,umask=0077        0  0
+EOF
+fi
 
 mkdir -p "$MNT/etc/arcader"
 cat > "$MNT/etc/arcader/display.conf" <<EOF
@@ -180,7 +211,12 @@ fi
 
 echo "[5/6] Installing bootloader ($MODE) and regenerating initramfs ..."
 emit 0.88 "Removing live-boot components"
-chroot "$MNT" /usr/bin/env DEBIAN_FRONTEND=noninteractive bash -e <<EOC
+POSTINST=/root/arcader-postinstall.sh
+mkdir -p "$MNT/root"
+cat > "$MNT$POSTINST" <<EOC
+#!/bin/bash
+set -e
+
 apt-get -y purge live-boot live-boot-doc live-config live-config-systemd live-tools 2>/dev/null || true
 apt-get -y autoremove --purge 2>/dev/null || true
 
@@ -200,10 +236,12 @@ EOG
 
 printf '@@P 0.94 %s\n' 'Installing GRUB bootloader'
 if [ "$MODE" = "uefi" ]; then
+  [ -d /usr/lib/grub/$EFI_TARGET ] || { echo "ERROR: /usr/lib/grub/$EFI_TARGET is missing (grub EFI modules not installed)" >&2; exit 1; }
   grub-install --target=$EFI_TARGET --efi-directory=/boot/efi --bootloader-id=arcader --recheck
   mkdir -p /boot/efi/EFI/BOOT
   cp /boot/efi/EFI/arcader/$EFI_GRUB /boot/efi/EFI/BOOT/$EFI_BOOT
 else
+  [ -d /usr/lib/grub/i386-pc ] || { echo "ERROR: /usr/lib/grub/i386-pc is missing (grub-pc-bin not installed)" >&2; exit 1; }
   grub-install --target=i386-pc --recheck "$DEV"
 fi
 printf '@@P 0.96 %s\n' 'Writing GRUB configuration'
@@ -218,6 +256,10 @@ rm -rf /var/lib/arcader/data/temp_cores_extract \
        /var/lib/arcader/data/temp_* \
        /var/lib/arcader/data/*_extract 2>/dev/null || true
 EOC
+
+chmod 755 "$MNT$POSTINST"
+chroot "$MNT" /usr/bin/env DEBIAN_FRONTEND=noninteractive bash -e "$POSTINST" </dev/null
+rm -f "$MNT$POSTINST"
 
 echo "[6/6] Unmounting ..."
 emit 0.98 "Flushing and unmounting"
